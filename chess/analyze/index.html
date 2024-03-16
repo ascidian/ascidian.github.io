@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<title>Analayze your chess.com games on lichess</title>
+	<style type="text/css">
+		.hidden { display: none !important; }
+		#content { display: flex; flex-direction: row; }
+		#chess-com { width: 15em; height: 100vh; background-color: black; overflow: auto; }
+		#chess-com-filter { color: white; display: flex; }
+		#chess-com-username { padding-left: 0.5em; flex: 1; }
+		#chess-com-month { padding-right: 0.5em; }
+		#chess-com-games { }
+		#lichess { flex: 1; height: 100vh; }
+		#lichess-analysis { height: 100%; width: 100%; }
+		#username-overlay {
+			position: absolute;
+			width: 100vw;
+			height: 100vh;
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			background-color: white;
+			opacity: 0.95;
+		}
+		body { margin: 0; padding: 0; overflow: hidden; }
+		iframe { border: none; margin: 0; padding: 0; }
+		.game { background-color: #222222; padding: 0.25em 0; border-top: 1px solid gray; border-bottom: 1px solid gray; }
+		.game.win { background-color: #226622; }
+		.game.loss { background-color: #662222; }
+		.game.draw { background-color: #222222; }
+		.game.selected { opacity: 0.75; }
+		.date { color: #ffff00; padding-left: 0.25em; }
+		.white { color: white; }
+		.black { color: #00ffff; }
+		.player, .opponent { padding: 0.1em; padding-left: 0.25em; margin-left: 0.75em; }
+	</style>
+</head>
+<body>
+	<div id="content">
+		<div id="chess-com">
+			<div id="chess-com-filter">
+				<div id="chess-com-username"></div>
+				<div id="chess-com-month"></div>
+			</div>
+			<div id="chess-com-games"></div>
+		</div>
+		<div id="lichess">
+			<iframe id="lichess-analysis"></iframe>
+		</div>
+		<div id="username-overlay">
+			<form id="analyze">
+				<input type="text" id="username" placeholder="chess.com username"/>
+				<select id="year"></select>
+				<select id="month">
+					<option value="01">Jan</option>
+					<option value="02">Feb</option>
+					<option value="03">Mar</option>
+					<option value="04">Apr</option>
+					<option value="05">May</option>
+					<option value="06">Jun</option>
+					<option value="07">Jul</option>
+					<option value="08">Aug</option>
+					<option value="09">Sep</option>
+					<option value="10">Oct</option>
+					<option value="11">Nov</option>
+					<option value="12">Dec</option>
+				</select>
+				<input type="submit" value="Analyze"/>
+			</form>
+		</div>
+	</div>
+	<script type="text/javascript">
+		class PGN
+		{
+			constructor(pgn, username)
+			{
+				let [header, moves] = pgn.split(/\s(?=1\. )/);
+				this.text = pgn;
+				this.headerText = header;
+				this.movesText = moves;
+				this.header = header.split(/(?=\[)/).reduce(
+					(result, item) => {
+						let parts = item.match(/\[(.+) "(.+)"\]/);
+						result[parts[1]] = parts[2];
+						return result;
+					},
+				{});
+				this.username = username || this.header.White;
+				this.isWhite = (this.header.White == this.username);
+			}
+			getPlayer()
+			{
+				return this.username;
+			}
+			getOpponent()
+			{
+				return (this.isWhite ? this.header.Black : this.header.White);
+			}
+			getColor()
+			{
+				return (this.isWhite ? 'white' : 'black');
+			}
+			getOpponentColor(username)
+			{
+				return (this.isWhite ? 'black' : 'white');
+			}
+			getELO()
+			{
+				return (this.isWhite ? this.header.WhiteElo : this.header.BlackElo);
+			}
+			getOpponentELO()
+			{
+				return (this.isWhite ? this.header.BlackElo : this.header.WhiteElo);
+			}
+			getResult()
+			{
+				return (
+					this.header.Result == "1/2-1/2" ? "draw" :
+					this.isWhite && this.header.Result == "1-0" ? "win" :
+					!this.isWhite && this.header.Result == "0-1" ? "win" : "loss"
+				);
+			}
+			getDate()
+			{
+				return new Date(Date.parse(
+					this.header.UTCDate.replaceAll('.', '-') + 'T' +
+					this.header.UTCTime + 'Z'
+				));
+			}
+		}
+		let pgns = new Array();
+		function getRecentGames(username, year, month)
+		{
+			document.getElementById('chess-com-username').innerText = username;
+			document.getElementById('chess-com-month').innerText = `${year}-${month}`;
+			let xhr = new XMLHttpRequest();
+			xhr.onreadystatechange = function() {
+				if (this.readyState == 4 && this.status == 200) {
+					// Typical action to be performed when the document is ready:
+					pgns = xhr.responseText.split(/(?=\[Event )/).map(pgnText => new PGN(pgnText, username));
+					displayGames(pgns);
+					showGameAnalysis(pgns[0]);
+				}
+			};
+			//let now = new Date();
+			//let options = { month: '2-digit' };
+			//let monthPath = `${now.getFullYear()}/${now.toLocaleDateString("en-US", options)}`;
+			let monthPath = `${year}/${month}`;
+			let url = `https://api.chess.com/pub/player/${username}/games/${monthPath}/pgn`;
+			xhr.open('GET', url, true);
+			xhr.send();
+		}
+		function displayGames(pgns)
+		{
+			let gamesContainer = document.getElementById("chess-com-games");
+			gamesContainer.replaceChildren();
+			pgns.forEach(pgn => {
+				let item = document.createElement("div");
+				item.className = `game ${pgn.getResult()}`;
+				gamesContainer.appendChild(item);
+				let options = { year: 'numeric', month: 'short', day: '2-digit', hour12: true, hour: '2-digit', minute: '2-digit', second: '2-digit'};
+				let date = pgn.getDate().toLocaleDateString("en-US", options);
+				item.innerHTML = `
+					<div class="date">${date}</div>
+					<div class="player ${pgn.getColor()}">${pgn.getPlayer()} (${pgn.getELO()})</div>
+					<div class="opponent ${pgn.getOpponentColor()}">${pgn.getOpponent()} (${pgn.getOpponentELO()})</div>
+				`;
+				item.addEventListener(
+					'click', event => showGameAnalysis(pgn, event), false
+				);
+			});
+		}
+		function showGameAnalysis(pgn, event)
+		{
+			let target = event?.currentTarget ?? document.querySelector('.game');
+			document.querySelector('.game.selected')?.classList.remove('selected');
+			target.classList.add('selected');
+			let movesText = pgn.movesText.replace(/ \{\[%clk[^\]]+\]\}/g, '').replace(/\s+/g, '_').replace('#', ''); 
+			document.getElementById('lichess-analysis').src =
+				`https://lichess.org/analysis/pgn/${movesText}?color=${pgn.getColor()}`;
+		}
+		function showOverlay()
+		{
+			document.getElementById('username-overlay').classList.remove('hidden');
+		}
+		function hideOverlay()
+		{
+			document.getElementById('username-overlay').classList.add('hidden');
+		}
+		function prepareOverlay()
+		{
+			let usernameInput = document.getElementById('username');
+			let username = window.localStorage.getItem('chess-com-username');
+			if(username) usernameInput.value = username;
+			let now = new Date();
+			let currentYear = now.getFullYear();
+			let currentMonth = (now.getMonth() + 1).toString();
+			currentMonth = (currentMonth.length == 1 ? '0' : '') + currentMonth;
+			let years = [...Array(10).keys()].map(x => currentYear - x);
+			let yearSelect = document.getElementById('year');
+			let monthSelect = document.getElementById('month');
+			yearSelect.innerHTML =
+				years.reduce((html, year) => html += `<option value="${year}">${year}</option>`, '');
+			yearSelect.value = currentYear;
+			monthSelect.value = currentMonth;
+			document.getElementById('analyze').addEventListener(
+				'submit', event => {
+					window.localStorage.setItem('chess-com-username', usernameInput.value);
+					if(usernameInput)
+					{
+						hideOverlay();
+						getRecentGames(usernameInput.value, yearSelect.value, monthSelect.value);
+					}
+					event.preventDefault();
+					event.stopPropagation();
+				}, false
+			);
+			document.getElementById('chess-com-filter').addEventListener(
+				'click', event => showOverlay(), false
+			);
+			if(username)
+			{
+				hideOverlay();
+				getRecentGames(usernameInput.value, yearSelect.value, monthSelect.value);
+			}
+		}
+		prepareOverlay();
+	</script>
+</body>
+</html>
